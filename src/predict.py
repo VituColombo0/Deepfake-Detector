@@ -4,9 +4,9 @@ import numpy as np
 import sys
 
 # --- CONFIGURAÇÕES ---
-MODEL_PATH = 'models/deepfake_detector_model.keras'
-IMG_HEIGHT = 128
-IMG_WIDTH = 128
+MODEL_PATH = 'models/deepfake_detector_v2_efficientnet.keras' # <-- NOVO MODELO
+IMG_HEIGHT = 224 # <-- NOVO TAMANHO
+IMG_WIDTH = 224 # <-- NOVO TAMANHO
 # --------------------
 
 def predict_image(image_path):
@@ -29,8 +29,8 @@ def predict_image(image_path):
         # Converte a imagem para um array numpy
         img_array = image.img_to_array(img)
         
-        # Normaliza os pixels da imagem (mesmo passo do treinamento)
-        img_array /= 255.0
+        # Usa a função de pré-processamento específica do EfficientNet
+        img_array = tf.keras.applications.efficientnet.preprocess_input(img_array)
         
         # Adiciona uma dimensão extra, pois o modelo espera um 'lote' (batch) de imagens
         img_array = np.expand_dims(img_array, axis=0)
