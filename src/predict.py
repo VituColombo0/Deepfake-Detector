@@ -2,48 +2,35 @@ import tensorflow as tf
 from tensorflow.keras.preprocessing import image
 import numpy as np
 import sys
+import os
+import glob # <-- Importamos a biblioteca para encontrar arquivos
 
 # --- CONFIGURAÇÕES ---
-MODEL_PATH = 'models/deepfake_detector_v2_efficientnet.keras' # <-- NOVO MODELO
-IMG_HEIGHT = 224 # <-- NOVO TAMANHO
-IMG_WIDTH = 224 # <-- NOVO TAMANHO
+MODEL_PATH = 'models/deepfake_detector_v2_efficientnet.keras'
+IMG_HEIGHT = 224
+IMG_WIDTH = 224
 # --------------------
 
 def predict_image(image_path):
     """
     Carrega o modelo treinado, prepara uma imagem e prevê se é REAL ou FAKE.
     """
-    print("--- Carregando o modelo treinado... ---")
-    try:
-        model = tf.keras.models.load_model(MODEL_PATH)
-    except Exception as e:
-        print(f"[ERRO] Não foi possível carregar o modelo. Verifique o caminho: {MODEL_PATH}")
-        print(f"Detalhe do erro: {e}")
+    if not os.path.exists(image_path):
+        print(f"[ERRO] O arquivo de imagem não foi encontrado em: {image_path}")
         return
+        
+    print("--- Carregando o modelo treinado... ---")
+    model = tf.keras.models.load_model(MODEL_PATH)
 
     print(f"--- Carregando e preparando a imagem: {image_path} ---")
-    try:
-        # Carrega a imagem e redimensiona para o tamanho que o modelo espera
-        img = image.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
-        
-        # Converte a imagem para um array numpy
-        img_array = image.img_to_array(img)
-        
-        # Usa a função de pré-processamento específica do EfficientNet
-        img_array = tf.keras.applications.efficientnet.preprocess_input(img_array)
-        
-        # Adiciona uma dimensão extra, pois o modelo espera um 'lote' (batch) de imagens
-        img_array = np.expand_dims(img_array, axis=0)
-    except Exception as e:
-        print(f"[ERRO] Não foi possível carregar ou processar a imagem.")
-        print(f"Detalhe do erro: {e}")
-        return
+    img = image.load_img(image_path, target_size=(IMG_HEIGHT, IMG_WIDTH))
+    img_array = image.img_to_array(img)
+    img_array_expanded = np.expand_dims(img_array, axis=0)
+    img_ready = tf.keras.applications.efficientnet.preprocess_input(img_array_expanded)
 
     print("--- Realizando a previsão... ---")
-    prediction = model.predict(img_array)
+    prediction = model.predict(img_ready)
 
-    # O gerador de dados atribuiu 'fake' a 0 e 'real' a 1.
-    # A saída da rede 'sigmoid' é uma probabilidade perto de 0 ou 1.
     print("\n--- Resultado ---")
     print(f"Probabilidade Bruta: {prediction[0][0]:.6f}")
 
@@ -54,11 +41,21 @@ def predict_image(image_path):
 
 # --- PONTO DE ENTRADA DO SCRIPT ---
 if __name__ == '__main__':
-    # Pega o caminho da imagem passado como argumento no terminal
-    if len(sys.argv) != 2:
-        print("\nUso incorreto!")
-        print("Como usar: python src/predict.py <caminho_para_sua_imagem>")
-        sys.exit(1)
-    
-    image_to_predict = sys.argv[1]
-    predict_image(image_to_predict)
+    # Se um caminho de imagem foi fornecido no terminal, use-o.
+    if len(sys.argv) == 2:
+        image_to_predict = sys.argv[1]
+        predict_image(image_to_predict)
+    # Se NENHUM caminho foi fornecido, roda o teste automático.
+    else:
+        print("--- Nenhum arquivo especificado. Rodando teste de sanidade automático... ---")
+        validation_real_path = 'data/validation/real/'
+        
+        # Encontra todos os arquivos de imagem na pasta
+        test_files = glob.glob(os.path.join(validation_real_path, '*.[jp][pn]g'))
+        
+        # Se encontrou algum arquivo, pega o primeiro da lista para testar
+        if test_files:
+            first_file = test_files[0]
+            predict_image(first_file)
+        else:
+            print(f"[ERRO] Nenhum arquivo de imagem encontrado em '{validation_real_path}' para o teste automático.")

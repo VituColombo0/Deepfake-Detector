@@ -1,0 +1,16 @@
+# Ignorar pastas de datasets
+data/raw_images/
+data/processed/
+data/img_align_celeba/
+data/processed_celeba/
+
+# Ignorar o cache e arquivos temporários do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignorar arquivos de ambiente (boa prática)
+.env
+venv/
+env/
