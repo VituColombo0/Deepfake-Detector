@@ -4,25 +4,59 @@ import os
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing import image
+import cv2
+import mtcnn
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="Detector de Deepfake",
     page_icon="🤖",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# --- CSS PERSONALIZADO PARA DEIXAR MAIS BONITO ---
+# Este bloco de CSS vai criar o estilo dos 'cards' e esconder o rodapé do Streamlit
+st.markdown("""
+<style>
+/* Estilo do container principal */
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+    padding-left: 5rem;
+    padding-right: 5rem;
+}
+/* Estilo do Card */
+.card {
+    background-color: #1a1a2e; /* Cor de fundo do card */
+    border-radius: 15px;
+    padding: 25px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+    transition: 0.3s;
+}
+.card:hover {
+    box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
+}
+/* Esconde o rodapé 'Made with Streamlit' */
+footer {
+    visibility: hidden;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # --- CONFIGURAÇÕES DO MODELO ---
 MODEL_PATH = 'models/deepfake_detector_v3_finetuned.keras'
 IMG_HEIGHT = 224
 IMG_WIDTH = 224
 
-# --- FUNÇÕES DO MODELO ---
+# --- FUNÇÕES DO MODELO (com cache para performance) ---
 
-# Usamos @st.cache_resource para garantir que o modelo seja carregado apenas UMA VEZ.
 @st.cache_resource
 def load_trained_model():
-    """Carrega o modelo treinado a partir do disco."""
+    if not os.path.exists(MODEL_PATH):
+        return None
     try:
         model = tf.keras.models.load_model(MODEL_PATH)
         return model
@@ -30,60 +64,91 @@ def load_trained_model():
         st.error(f"Erro ao carregar o modelo: {e}")
         return None
 
-def predict_uploaded_image(model, uploaded_image):
-    """Prepara a imagem e realiza a previsão."""
+@st.cache_resource
+def load_face_detector():
+    return mtcnn.MTCNN()
+
+def predict_face(model, face_image):
     try:
-        # Prepara a imagem para o modelo
-        img = Image.open(uploaded_image).convert('RGB')
-        img = img.resize((IMG_WIDTH, IMG_HEIGHT))
+        img = face_image.resize((IMG_WIDTH, IMG_HEIGHT))
         img_array = image.img_to_array(img)
         img_array_expanded = np.expand_dims(img_array, axis=0)
         img_ready = tf.keras.applications.efficientnet.preprocess_input(img_array_expanded)
-
-        # Realiza a previsão
-        prediction = model.predict(img_ready)
-        
+        prediction = model.predict(img_ready, verbose=0)
         return prediction[0][0]
     except Exception as e:
-        st.error(f"Erro ao processar a imagem: {e}")
+        st.error(f"Erro ao realizar a previsão: {e}")
         return None
 
-# Carrega o modelo
-model = load_trained_model()
+# Carrega os modelos
+classifier_model = load_trained_model()
+face_detector_model = load_face_detector()
 
-# --- INTERFACE GRÁFICA ---
-st.title("🤖 Detector de Deepfakes em Imagens")
-st.write("""
-    Faça o upload de uma imagem de rosto e a nossa Inteligência Artificial (Modelo V2 - EfficientNet)
-    analisará se o rosto é REAL ou FAKE.
-""")
-st.markdown("---")
+# --- LAYOUT DA INTERFACE ---
 
-uploaded_file = st.file_uploader(
-    "Escolha uma imagem de rosto...", 
-    type=["jpg", "jpeg", "png"]
-)
+# Barra Lateral
+with st.sidebar:
+    st.title("Sobre o Projeto")
+    st.info("""
+        Este é um detector de Deepfakes que utiliza um modelo de IA de ponta (EfficientNetB0) 
+        com a técnica de Aprendizado por Transferência e Ajuste Fino para alcançar alta precisão.
+    """)
+    st.warning("O processamento de dados para o modelo V4 final ainda está em andamento.")
 
-if uploaded_file is not None and model is not None:
-    col1, col2 = st.columns([1, 2]) # Coluna da imagem menor que a da análise
+# Corpo Principal
+st.title("🤖 Detector de Deepfakes v2.0")
+
+# Card de Upload
+with st.container():
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.header("1. Faça o Upload da Imagem")
+    st.write("Envie uma imagem (JPG, JPEG, PNG) para que a IA possa analisá-la.")
+    uploaded_file = st.file_uploader(
+        "Escolha um arquivo...", 
+        type=["jpg", "jpeg", "png"],
+        label_visibility="collapsed"
+    )
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+if uploaded_file is not None and classifier_model is not None:
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    opencv_image = cv2.imdecode(file_bytes, 1)
+    opencv_image_rgb = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2RGB)
     
-    with col1:
-        st.subheader("Imagem Enviada")
-        # Corrigido o 'use_column_width' para 'use_container_width'
-        st.image(uploaded_file, caption='Sua imagem.', use_column_width=True)
+    detections = face_detector_model.detect_faces(opencv_image_rgb)
 
-    with col2:
-        st.subheader("Análise da IA")
-        with st.spinner('Analisando a imagem...'):
-            prediction_score = predict_uploaded_image(model, uploaded_file)
-        
-        if prediction_score is not None:
-            st.success("Análise concluída!")
+    # Card de Resultado
+    with st.container():
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.header("2. Resultado da Análise")
+
+        if not detections:
+            st.warning("Opa! Nenhum rosto foi detectado nesta imagem. Por favor, tente outra.")
+        else:
+            x, y, width, height = detections[0]['box']
+            cropped_face = opencv_image_rgb[y:y+height, x:x+width]
+            face_pil = Image.fromarray(cropped_face)
+
+            col1, col2 = st.columns([1, 1.5]) # Colunas para imagem e resultado
             
-            # Formata o resultado de forma mais visual
-            st.metric(label="Pontuação de 'Realidade'", value=f"{prediction_score:.2%}")
+            with col1:
+                st.image(face_pil, caption='Rosto Detectado para Análise.', use_column_width=True)
 
-            if prediction_score > 0.5:
-                st.markdown("### Veredito: <span style='color:green;font-size:24px;'>Este rosto é provavelmente REAL.</span>", unsafe_allow_html=True)
-            else:
-                st.markdown("### Veredito: <span style='color:red;font-size:24px;'>Este rosto é provavelmente FAKE.</span>", unsafe_allow_html=True)
+            with col2:
+                with st.spinner('Analisando o rosto...'):
+                    prediction_score = predict_face(classifier_model, face_pil)
+                
+                if prediction_score is not None:
+                    st.success("Análise concluída!")
+                    score_percent = prediction_score * 100
+                    st.metric(label="Pontuação de 'Realidade'", value=f"{score_percent:.2f}%")
+
+                    if prediction_score > 0.5:
+                        st.markdown(f"### Veredito: ✅ <span style='color:#32CD32;font-size:24px;'>PROVAVELMENTE REAL.</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"### Veredito: ❌ <span style='color:#FF4B4B;font-size:24px;'>PROVAVELMENTE FAKE.</span>", unsafe_allow_html=True)
+                    
+                    st.info(f"**Como ler o resultado:** A 'Pontuação de Realidade' indica a confiança da IA de que a imagem é autêntica. Valores altos (próximos a 100%) sugerem um rosto real, enquanto valores baixos (próximos a 0%) sugerem um deepfake.", icon="ℹ️")
+
+        st.markdown('</div>', unsafe_allow_html=True)

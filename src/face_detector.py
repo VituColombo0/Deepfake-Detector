@@ -4,14 +4,10 @@ import os
 import glob
 from tqdm import tqdm # Importamos a biblioteca da barra de progresso
 
-# --- CONFIGURAÇÕES ---
-# Caminhos relativos, já que as pastas estão dentro do projeto.
-# A pasta de onde vamos ler as fotos do CelebA
+# A pasta de onde vamos ler as 200.000 fotos do CelebA
 INPUT_DIR = 'data/img_align_celeba' 
 # Uma nova pasta para salvar os rostos recortados do CelebA
-OUTPUT_DIR = 'data/processed_celeba' 
-# --------------------
-# --------------------
+OUTPUT_DIR = 'data/processed_celeba'
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
