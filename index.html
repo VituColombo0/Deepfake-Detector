@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deepfake Detector Pro</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>👁️ Deepfake Detector Pro</h1>
+        <p>A mais avançada IA para detecção de manipulações em mídias digitais.</p>
+        
+        <div class="tab-buttons">
+            <button class="tab-button active" onclick="openTab(event, 'ImageTab')">🖼️ Análise de Imagem</button>
+            <button class="tab-button" onclick="openTab(event, 'VideoTab')">🎬 Análise de Vídeo</button>
+        </div>
+
+        <div id="ImageTab" class="tab-content active">
+            <form id="upload-form-image">
+                <input type="file" id="file-input-image" name="file" accept="image/*" required>
+                <button type="submit">Analisar Imagem</button>
+            </form>
+        </div>
+
+        <div id="VideoTab" class="tab-content">
+            <form id="upload-form-video">
+                <input type="file" id="file-input-video" name="file" accept="video/*" required>
+                <button type="submit">Analisar Vídeo</button>
+            </form>
+        </div>
+
+        <div id="result-container" class="hidden">
+            <div id="loader" class="loader hidden"></div>
+            <div id="result-text"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

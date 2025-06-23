@@ -6,149 +6,187 @@ import tensorflow as tf
 from tensorflow.keras.preprocessing import image
 import cv2
 import mtcnn
+import time
+import requests
+import plotly.graph_objects as go
+from streamlit_lottie import st_lottie
+# Garante que o nosso script de XAI seja encontrado
+from xai_utils import generate_gradcam_heatmap, overlay_heatmap_on_image 
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Detector de Deepfake",
+    page_title="Deepfake Detector Pro",
     page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# --- CSS PERSONALIZADO PARA DEIXAR MAIS BONITO ---
-# Este bloco de CSS vai criar o estilo dos 'cards' e esconder o rodapé do Streamlit
+# --- TEMA E ESTILO ---
 st.markdown("""
 <style>
-/* Estilo do container principal */
-.main .block-container {
-    padding-top: 2rem;
-    padding-bottom: 2rem;
-    padding-left: 5rem;
-    padding-right: 5rem;
-}
-/* Estilo do Card */
-.card {
-    background-color: #1a1a2e; /* Cor de fundo do card */
-    border-radius: 15px;
-    padding: 25px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
-    transition: 0.3s;
-}
-.card:hover {
-    box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
-}
-/* Esconde o rodapé 'Made with Streamlit' */
-footer {
-    visibility: hidden;
-}
+    .block-container { padding: 2rem 3rem; }
+    .card { background-color: #0E1117; border: 1px solid #262730; border-radius: 15px; padding: 25px; margin-top: 20px; box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2); }
+    footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-
 # --- CONFIGURAÇÕES DO MODELO ---
-MODEL_PATH = 'models/deepfake_detector_v3_finetuned.keras'
-IMG_HEIGHT = 224
-IMG_WIDTH = 224
+# ATENÇÃO: Quando o V4 estiver pronto, trocaremos para 'deepfake_detector_v4_final.keras'
+MODEL_PATH = 'models/deepfake_detector_v3_finetuned.keras' 
+IMG_HEIGHT, IMG_WIDTH = 224, 224
 
-# --- FUNÇÕES DO MODELO (com cache para performance) ---
-
+# --- FUNÇÕES CACHEADAS ---
 @st.cache_resource
-def load_trained_model():
-    if not os.path.exists(MODEL_PATH):
-        return None
-    try:
-        model = tf.keras.models.load_model(MODEL_PATH)
-        return model
-    except Exception as e:
-        st.error(f"Erro ao carregar o modelo: {e}")
-        return None
+def load_models():
+    face_detector = mtcnn.MTCNN()
+    classifier_model = None
+    if os.path.exists(MODEL_PATH):
+        try:
+            classifier_model = tf.keras.models.load_model(MODEL_PATH)
+            classifier_model.compile(run_eagerly=True)
+        except Exception as e:
+            st.error(f"Erro ao carregar o modelo classificador: {e}")
+    return face_detector, classifier_model
 
-@st.cache_resource
-def load_face_detector():
-    return mtcnn.MTCNN()
+@st.cache_data
+def load_lottie_animation(url: str):
+    r = requests.get(url)
+    if r.status_code != 200: return None
+    return r.json()
 
-def predict_face(model, face_image):
-    try:
-        img = face_image.resize((IMG_WIDTH, IMG_HEIGHT))
-        img_array = image.img_to_array(img)
-        img_array_expanded = np.expand_dims(img_array, axis=0)
-        img_ready = tf.keras.applications.efficientnet.preprocess_input(img_array_expanded)
-        prediction = model.predict(img_ready, verbose=0)
-        return prediction[0][0]
-    except Exception as e:
-        st.error(f"Erro ao realizar a previsão: {e}")
-        return None
+def preprocess_image_for_model(pil_image):
+    img = pil_image.resize((IMG_WIDTH, IMG_HEIGHT))
+    img_array = image.img_to_array(img)
+    img_array_expanded = np.expand_dims(img_array, axis=0)
+    return tf.keras.applications.efficientnet.preprocess_input(img_array_expanded)
 
-# Carrega os modelos
-classifier_model = load_trained_model()
-face_detector_model = load_face_detector()
+# --- CARREGAMENTO INICIAL ---
+face_detector, classifier_model = load_models()
+lottie_animation = load_lottie_animation("https://assets9.lottiefiles.com/packages/lf20_x2oi05jr.json")
 
-# --- LAYOUT DA INTERFACE ---
+# --- INTERFACE PRINCIPAL ---
+st.title("👁️ Deepfake Detector Pro")
+st.write("Uma ferramenta de IA para analisar e detectar manipulações em imagens e vídeos.")
+st.markdown("---")
 
-# Barra Lateral
-with st.sidebar:
-    st.title("Sobre o Projeto")
-    st.info("""
-        Este é um detector de Deepfakes que utiliza um modelo de IA de ponta (EfficientNetB0) 
-        com a técnica de Aprendizado por Transferência e Ajuste Fino para alcançar alta precisão.
-    """)
-    st.warning("O processamento de dados para o modelo V4 final ainda está em andamento.")
+if classifier_model is None:
+    st.error("Modelo de IA não pôde ser carregado. Verifique se o modelo foi treinado e o caminho está correto.")
+    st.stop()
 
-# Corpo Principal
-st.title("🤖 Detector de Deepfakes v2.0")
+tab1, tab2 = st.tabs(["🖼️ Análise de Imagem com XAI", "🎬 Análise de Vídeo com XAI"])
 
-# Card de Upload
-with st.container():
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.header("1. Faça o Upload da Imagem")
-    st.write("Envie uma imagem (JPG, JPEG, PNG) para que a IA possa analisá-la.")
-    uploaded_file = st.file_uploader(
-        "Escolha um arquivo...", 
-        type=["jpg", "jpeg", "png"],
-        label_visibility="collapsed"
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
+# --- LÓGICA COMPLETA DA ABA DE IMAGEM ---
+with tab1:
+    with st.container(border=True):
+        st.header("1. Faça o Upload da Imagem")
+        uploaded_image_file = st.file_uploader("", type=["jpg", "jpeg", "png"], key="image_uploader")
 
-
-if uploaded_file is not None and classifier_model is not None:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    opencv_image = cv2.imdecode(file_bytes, 1)
-    opencv_image_rgb = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2RGB)
-    
-    detections = face_detector_model.detect_faces(opencv_image_rgb)
-
-    # Card de Resultado
-    with st.container():
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.header("2. Resultado da Análise")
-
-        if not detections:
-            st.warning("Opa! Nenhum rosto foi detectado nesta imagem. Por favor, tente outra.")
-        else:
-            x, y, width, height = detections[0]['box']
-            cropped_face = opencv_image_rgb[y:y+height, x:x+width]
-            face_pil = Image.fromarray(cropped_face)
-
-            col1, col2 = st.columns([1, 1.5]) # Colunas para imagem e resultado
+    if uploaded_image_file:
+        with st.container(border=True):
+            st.header("2. Resultado da Análise Explicável (XAI)")
             
-            with col1:
-                st.image(face_pil, caption='Rosto Detectado para Análise.', use_column_width=True)
+            original_pil = Image.open(uploaded_image_file).convert('RGB')
+            original_cv = cv2.cvtColor(np.array(original_pil), cv2.COLOR_RGB2BGR)
 
-            with col2:
-                with st.spinner('Analisando o rosto...'):
-                    prediction_score = predict_face(classifier_model, face_pil)
+            with st.spinner("Detectando rosto..."):
+                detections = face_detector.detect_faces(np.array(original_pil))
+
+            if not detections:
+                st.warning("Opa! Nenhum rosto foi detectado nesta imagem.")
+            else:
+                main_face = max(detections, key=lambda d: d['box'][2] * d['box'][3])
+                x, y, w, h = main_face['box']
+                cropped_pil = original_pil.crop((x, y, x + w, y + h))
                 
-                if prediction_score is not None:
-                    st.success("Análise concluída!")
-                    score_percent = prediction_score * 100
-                    st.metric(label="Pontuação de 'Realidade'", value=f"{score_percent:.2f}%")
-
-                    if prediction_score > 0.5:
-                        st.markdown(f"### Veredito: ✅ <span style='color:#32CD32;font-size:24px;'>PROVAVELMENTE REAL.</span>", unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"### Veredito: ❌ <span style='color:#FF4B4B;font-size:24px;'>PROVAVELMENTE FAKE.</span>", unsafe_allow_html=True)
+                with st.spinner("Analisando o rosto e gerando explicação..."):
+                    img_ready_for_model = preprocess_image_for_model(cropped_pil)
+                    prediction = classifier_model.predict(img_ready_for_model, verbose=0)[0][0]
+                    heatmap = generate_gradcam_heatmap(img_ready_for_model, classifier_model)
                     
-                    st.info(f"**Como ler o resultado:** A 'Pontuação de Realidade' indica a confiança da IA de que a imagem é autêntica. Valores altos (próximos a 100%) sugerem um rosto real, enquanto valores baixos (próximos a 0%) sugerem um deepfake.", icon="ℹ️")
+                    cropped_cv_for_overlay = cv2.cvtColor(np.array(cropped_pil), cv2.COLOR_RGB2BGR)
+                    overlaid_image = overlay_heatmap_on_image(cropped_cv_for_overlay, heatmap)
 
-        st.markdown('</div>', unsafe_allow_html=True)
+                st.success("Análise concluída!")
+                st.markdown("---")
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.image(cropped_pil, caption='Rosto Detectado', use_column_width=True)
+                with col2:
+                    st.image(heatmap, caption='Mapa de Calor (Foco da IA)', use_column_width=True, channels="BGR")
+                with col3:
+                    st.image(overlaid_image, caption='Análise Sobreposta', use_column_width=True, channels="BGR")
+                
+                st.markdown("---")
+                if prediction > 0.5:
+                    st.success(f"Veredito: REAL (Confiança de {prediction:.2%})", icon="✅")
+                    st.info("O mapa de calor mostra as áreas que a IA identificou como 'normais' ou 'autênticas'.", icon="💡")
+                else:
+                    st.error(f"Veredito: FAKE (Confiança de {1-prediction:.2%})", icon="❌")
+                    st.info("O mapa de calor mostra as áreas que a IA considerou 'suspeitas' ou 'inconsistentes'.", icon="💡")
+
+# --- LÓGICA COMPLETA DA ABA DE VÍDEO ---
+with tab2:
+    with st.container(border=True):
+        st.header("Analisar um Arquivo de Vídeo")
+        uploaded_video_file = st.file_uploader("Escolha um arquivo de vídeo...", type=["mp4", "mov", "avi", "mkv"], key="video_uploader")
+
+    if uploaded_video_file:
+        if st.button("Iniciar Análise do Vídeo", key="analyze_video_button"):
+            temp_dir = "temp_uploads"
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_video_path = os.path.join(temp_dir, f"{int(time.time())}_{uploaded_video_file.name}")
+            with open(temp_video_path, "wb") as f:
+                f.write(uploaded_video_file.getbuffer())
+
+            progress_bar = st.progress(0, text="Análise em andamento... 0%")
+            status_text = st.empty()
+            image_placeholder = st.empty()
+
+            cap = cv2.VideoCapture(temp_video_path)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            frame_idx, real_votes, fake_votes = 0, 0, 0
+            suspicious_frames = [] 
+
+            status_text.info("Processando vídeo... por favor, aguarde.")
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret: break
+
+                if frame_idx % 5 == 0:
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    detections = face_detector.detect_faces(frame_rgb)
+                    
+                    if detections:
+                        main_face = max(detections, key=lambda d: d['box'][2] * d['box'][3])
+                        x, y, w, h = main_face['box']
+                        cropped_face = frame_rgb[y:y+h, x:x+w]
+                        face_pil = Image.fromarray(cropped_face)
+                        
+                        img_ready = preprocess_image_for_model(face_pil)
+                        prediction = classifier_model.predict(img_ready, verbose=0)[0][0]
+                        
+                        if prediction is not None:
+                            if prediction > 0.5:
+                                label, color, real_votes = f"REAL {prediction:.1%}", (0, 255, 0), real_votes + 1
+                            else:
+                                label, color, fake_votes = f"FAKE {1-prediction:.1%}", (0, 0, 255), fake_votes + 1
+                                if (1 - prediction) > 0.6: # Guarda se a confiança de FAKE for alta
+                                    suspicious_frames.append({'frame': frame_rgb, 'score': 1 - prediction})
+                            
+                            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+                            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                
+                image_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                frame_idx += 1
+                progress_percent = int((frame_idx / total_frames) * 100)
+                progress_bar.progress(progress_percent, text=f"Análise em andamento... {progress_percent}%")
+            
+            cap.release()
+            os.remove(temp_video_path)
+            progress_bar.empty()
+            status_text.success("Análise de vídeo concluída!")
+            
+            with st.container(border=True):
+                st.subheader("Relatório Final do Vídeo")
+                # ... (resto da lógica de relatório e XAI do vídeo)

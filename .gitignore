@@ -3,6 +3,9 @@ data/raw_images/
 data/processed/
 data/img_align_celeba/
 data/processed_celeba/
+data/final_train/
+data/final_validation/
+temp_uploads/
 
 # Ignorar o cache e arquivos temporários do Python
 __pycache__/
