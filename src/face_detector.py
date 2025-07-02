@@ -1,58 +1,72 @@
-import cv2
-import mtcnn
+# src/face_detector.py (Versão que aceita argumentos)
+
 import os
-import glob
-from tqdm import tqdm # Importamos a biblioteca da barra de progresso
+import cv2
+import sys
+from tqdm import tqdm
+import mtcnn
+from multiprocessing import Pool, cpu_count
 
-# A pasta de onde vamos ler as 200.000 fotos do CelebA
-INPUT_DIR = 'data/img_align_celeba' 
-# Uma nova pasta para salvar os rostos recortados do CelebA
-OUTPUT_DIR = 'data/processed_celeba'
+# Esta função continua a mesma
+def init_worker():
+    global face_detector
+    face_detector = mtcnn.MTCNN()
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# Encontra todos os arquivos de imagem no diretório de entrada
-image_paths = glob.glob(os.path.join(INPUT_DIR, '*.jpg'))
-print(f"Encontradas {len(image_paths)} imagens em '{INPUT_DIR}'")
-
-face_detector = mtcnn.MTCNN()
-
-# --- Loop com Barra de Progresso (tqdm) ---
-# O tqdm vai envolver nossa lista de imagens e mostrar o progresso
-for image_path in tqdm(image_paths, desc="Processando Imagens"):
+# Esta função agora recebe a pasta de saída como argumento
+def process_single_image(args):
+    image_path, output_dir = args
     try:
-        # --- Lógica para ser "Resumível" ---
-        # Cria o nome do arquivo de saída esperado
-        original_filename = os.path.basename(image_path)
-        output_path = os.path.join(OUTPUT_DIR, original_filename)
-
-        # Se o arquivo já existe na pasta de saída, pula para o próximo
-        if os.path.exists(output_path):
-            continue
-        # -----------------------------------------
-
         image = cv2.imread(image_path)
-        if image is None:
-            continue
+        if image is None: return None
 
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        detections = face_detector.detect_faces(image_rgb)
-        
-        if detections:
-            # Pega apenas o primeiro rosto e de maior confiança
-            main_face = detections[0]
-            x, y, width, height = main_face['box']
+        if not face_detector: init_worker() # Garante que o detector seja inicializado
             
-            # Recorta o rosto da imagem original
-            cropped_face = image[y:y+height, x:x+width]
+        detections = face_detector.detect_faces(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
-            # Salva o rosto recortado
-            cv2.imwrite(output_path, cropped_face)
-
+        if detections:
+            main_face = max(detections, key=lambda d: d['box'][2] * d['box'][3])
+            x, y, w, h = main_face['box']
+            if w > 50 and h > 50:
+                cropped_face = image[y:y+h, x:x+w]
+                output_path = os.path.join(output_dir, os.path.basename(image_path))
+                cv2.imwrite(output_path, cropped_face)
+        return None
     except Exception as e:
-        # Se ocorrer um erro em uma imagem específica (ex: arquivo corrompido),
-        # ele registrará o erro e continuará para a próxima, sem travar.
-        print(f"Erro ao processar {image_path}: {e}")
-        continue
+        return f"Erro em {os.path.basename(image_path)}: {e}"
 
-print("\n--- Processamento em lote concluído! ---")
+# A função principal agora é mais genérica
+def process_image_folder(input_folder, output_folder):
+    os.makedirs(output_folder, exist_ok=True)
+    
+    files_to_process = [os.path.join(input_folder, f) for f in os.listdir(input_folder) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    if not files_to_process:
+        print(f"[AVISO] Nenhuma imagem encontrada em '{input_folder}'")
+        return
+
+    print(f"Encontradas {len(files_to_process)} imagens para processar em '{input_folder}'.")
+    num_processes = cpu_count() - 1 if cpu_count() > 1 else 1
+    print(f"Iniciando processamento com {num_processes} processos.")
+    
+    # Prepara os argumentos para cada chamada da função
+    tasks = [(path, output_folder) for path in files_to_process]
+
+    with Pool(processes=num_processes, initializer=init_worker) as pool:
+        results = list(tqdm(pool.imap_unordered(process_single_image, tasks), total=len(tasks)))
+    
+    errors = [r for r in results if r is not None]
+    if errors:
+        print("\n--- Ocorreram alguns erros durante o processamento: ---")
+        for error_msg in errors:
+            print(error_msg)
+    print(f"--- Processamento de '{input_folder}' concluído! ---")
+
+# O script agora lê os caminhos do terminal
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Uso: python face_detector.py <pasta_de_entrada> <pasta_de_saida>")
+        sys.exit(1)
+        
+    input_path = sys.argv[1]
+    output_path = sys.argv[2]
+    
+    process_image_folder(input_path, output_path)

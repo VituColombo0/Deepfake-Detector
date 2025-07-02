@@ -1,3 +1,5 @@
+# src/prepare_final_dataset.py
+
 import os
 import glob
 import random
@@ -5,73 +7,89 @@ import shutil
 from tqdm import tqdm
 
 # --- CONFIGURAÇÕES ---
-# Pastas contendo os rostos REAIS processados
-REAL_FACE_SOURCES = [
-    'data/processed',       # Rostos do UTKFace
-    'data/processed_celeba' # Rostos do CelebA
-]
+# Lista de TODAS as pastas de origem, incluindo o novo dataset.
+SOURCE_FOLDERS = {
+    'real': [
+        'data/processed',             # Rostos do UTKFace
+        'data/processed_celeba',      # Rostos do CelebA
+        'data/processed_celecdf/real', # Rostos REAIS do Celeb-DF
+        'data/processed_novo/train/real',
+        'data/processed_novo/validation/real',
+        'data/processed_novo/test/real'
+    ],
+    'fake': [
+        'data/train/fake',              # Fakes antigos (StyleGAN)
+        'data/processed_celecdf/fake',  # Fakes do Celeb-DF
+        'data/processed_dftimit/fake',  # Fakes do Deepfake-TIMIT
+        'data/processed_novo/train/fake',
+        'data/processed_novo/validation/fake',
+        'data/processed_novo/test/fake'
+    ]
+}
 
-# Pasta de onde vamos pegar os rostos FAKES.
-# Vamos pegar da nossa pasta de treino antiga, que já está organizada.
-FAKE_FACE_SOURCE = 'data/train/fake' 
-
-# Pastas de destino final
-FINAL_TRAIN_DIR = 'data/final_train'
-FINAL_VALIDATION_DIR = 'data/final_validation'
-
-# Proporção da divisão
-SPLIT_RATIO = 0.8
+TRAIN_FOLDER = 'data/final_train'
+VALIDATION_FOLDER = 'data/final_validation'
+SPLIT_RATIO = 0.9
 # --------------------
 
-def create_dirs():
-    """Cria as pastas de destino final."""
-    for folder in [FINAL_TRAIN_DIR, FINAL_VALIDATION_DIR]:
-        os.makedirs(os.path.join(folder, 'real'), exist_ok=True)
-        os.makedirs(os.path.join(folder, 'fake'), exist_ok=True)
-    print("Pastas de destino final criadas.")
-
-# A função agora recebe as pastas de destino como argumentos
-def organize_class(source_folders, class_name, train_dest_folder, validation_dest_folder):
-    """Junta, embaralha e distribui os arquivos de uma classe (real ou fake)."""
-    print(f"\nOrganizando a classe: '{class_name}'")
-    
+def collect_files(source_list):
     all_files = []
-    for source_folder in source_folders:
-        print(f"Coletando arquivos de: {source_folder}")
-        # Ajuste para pegar jpg e jpeg
-        files = glob.glob(os.path.join(source_folder, '*.jp*g'))
+    print(f"Coletando arquivos de: {source_list}")
+    for folder in source_list:
+        if not os.path.isdir(folder):
+            print(f"  [AVISO] Pasta não encontrada: {folder}. Pulando.")
+            continue
+        # Busca recursivamente por imagens para garantir que nada seja perdido
+        files = glob.glob(os.path.join(folder, '**', '*.jp*g'), recursive=True)
+        files.extend(glob.glob(os.path.join(folder, '**', '*.png'), recursive=True))
         all_files.extend(files)
+    return all_files
+
+def balance_and_split_data(real_files, fake_files):
+    if not real_files or not fake_files:
+        print("[ERRO] Uma das classes (real ou fake) não tem imagens. Abortando.")
+        return None
     
-    if not all_files:
-        print(f"[AVISO] Nenhum arquivo encontrado para a classe '{class_name}'. Pulando.")
-        return
-
-    random.shuffle(all_files)
-    print(f"Total de {len(all_files)} arquivos encontrados e embaralhados.")
-
-    split_point = int(len(all_files) * SPLIT_RATIO)
-    train_files = all_files[:split_point]
-    validation_files = all_files[split_point:]
-
-    # Copia os arquivos de treino para o destino correto
-    print(f"Copiando {len(train_files)} arquivos de treino...")
-    for file_path in tqdm(train_files, desc=f"Train {class_name}"):
-        file_name = os.path.basename(file_path)
-        shutil.copy(file_path, os.path.join(train_dest_folder, class_name, file_name))
-
-    # Copia os arquivos de validação para o destino correto
-    print(f"Copiando {len(validation_files)} arquivos de validação...")
-    for file_path in tqdm(validation_files, desc=f"Validation {class_name}"):
-        file_name = os.path.basename(file_path)
-        # --- AQUI ESTAVA O ERRO, AGORA CORRIGIDO ---
-        shutil.copy(file_path, os.path.join(validation_dest_folder, class_name, file_name))
+    min_size = min(len(real_files), len(fake_files))
+    print(f"\nBalanceando datasets. Usando {min_size} amostras de cada classe.")
     
-    print(f"Classe '{class_name}' organizada com sucesso.")
+    random.shuffle(real_files)
+    random.shuffle(fake_files)
+    
+    real_files_sample = real_files[:min_size]
+    fake_files_sample = fake_files[:min_size]
 
+    datasets = {'real': {}, 'fake': {}}
+    real_split_point = int(len(real_files_sample) * SPLIT_RATIO)
+    datasets['real']['train'] = real_files_sample[:real_split_point]
+    datasets['real']['validation'] = real_files_sample[real_split_point:]
+    
+    fake_split_point = int(len(fake_files_sample) * SPLIT_RATIO)
+    datasets['fake']['train'] = fake_files_sample[:fake_split_point]
+    datasets['fake']['validation'] = fake_files_sample[fake_split_point:]
+    
+    return datasets
 
-if __name__ == "__main__":
-    create_dirs()
-    # Chamamos a função passando as pastas de destino corretas
-    organize_class(REAL_FACE_SOURCES, 'real', FINAL_TRAIN_DIR, FINAL_VALIDATION_DIR)
-    organize_class([FAKE_FACE_SOURCE], 'fake', FINAL_TRAIN_DIR, FINAL_VALIDATION_DIR)
-    print("\n--- Preparação do dataset final concluída! ---")
+def copy_files(datasets):
+    if datasets is None: return
+    for label, splits in datasets.items():
+        for split_name, files in splits.items():
+            dest_folder = os.path.join(TRAIN_FOLDER if split_name == 'train' else VALIDATION_FOLDER, label)
+            os.makedirs(dest_folder, exist_ok=True)
+            print(f"\nCopiando {len(files)} arquivos para '{dest_folder}'...")
+            for f in tqdm(files, desc=f"Copiando {label} {split_name}"):
+                shutil.copy(f, dest_folder)
+
+if __name__ == '__main__':
+    print("--- INICIANDO A PREPARAÇÃO DO SUPER-DATASET FINAL ---")
+    if os.path.exists(TRAIN_FOLDER): shutil.rmtree(TRAIN_FOLDER)
+    if os.path.exists(VALIDATION_FOLDER): shutil.rmtree(VALIDATION_FOLDER)
+    print("Pastas de destino antigas foram limpas.")
+
+    real_files = collect_files(SOURCE_FOLDERS['real'])
+    fake_files = collect_files(SOURCE_FOLDERS['fake'])
+    
+    balanced_datasets = balance_and_split_data(real_files, fake_files)
+    copy_files(balanced_datasets)
+    
+    print("\n--- PREPARAÇÃO DO SUPER-DATASET CONCLUÍDA ---")

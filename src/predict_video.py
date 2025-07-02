@@ -6,23 +6,23 @@ from tensorflow.keras.preprocessing import image
 from tqdm import tqdm
 import os
 
-# --- CONFIGURAÇÕES ---
-# Usaremos o V3 por enquanto. Quando o V4 estiver pronto, só trocaremos este caminho.
+
+
 MODEL_PATH = 'models/deepfake_detector_v3_finetuned.keras'
 
-# Coloque um vídeo de teste na pasta principal do projeto e atualize o nome aqui.
+
 VIDEO_PATH = 'video_teste.mp4'  
 OUTPUT_VIDEO_PATH = 'resultado_video.mp4'
 
-# Parâmetros de análise
+
 IMG_HEIGHT = 224
 IMG_WIDTH = 224
-FRAME_INTERVAL = 3  # Analisar 1 a cada 3 frames para um bom equilíbrio entre velocidade e precisão.
+FRAME_INTERVAL = 3  
 
-# Cores para os retângulos (em formato BGR que o OpenCV usa)
-COLOR_REAL = (0, 255, 0)  # Verde
-COLOR_FAKE = (0, 0, 255)  # Vermelho
-# --------------------
+
+COLOR_REAL = (0, 255, 0)  
+COLOR_FAKE = (0, 0, 255)  
+
 
 def main():
     """Função principal para processar o vídeo."""
@@ -58,13 +58,13 @@ def main():
             if not ret:
                 break
 
-            # Apenas processa o frame no intervalo definido
+            
             if frame_idx % FRAME_INTERVAL == 0:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 detections = face_detector.detect_faces(frame_rgb)
                 
                 if detections:
-                    # Pega o rosto com maior área na tela
+                    
                     main_face = max(detections, key=lambda d: d['box'][2] * d['box'][3])
                     x, y, w, h = main_face['box']
                     
@@ -104,7 +104,7 @@ def main():
         fake_percent = (fake_votes / total_votes) * 100
         print(f"Resultado geral: {real_percent:.2f}% dos frames analisados são REAL, {fake_percent:.2f}% são FAKE.")
         
-        if fake_percent > 40: # Nosso critério (limiar) para considerar o vídeo como um todo FAKE
+        if fake_percent > 40: 
              print("Veredito Final: O vídeo é provavelmente um DEEPFAKE.")
         else:
              print("Veredito Final: O vídeo é provavelmente REAL.")
